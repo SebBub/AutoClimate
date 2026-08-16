@@ -1,5 +1,6 @@
 """Publish a plot + text to a WordPress page via the REST API (Application Password auth)."""
 
+import mimetypes
 from pathlib import Path
 
 import requests
@@ -15,11 +16,15 @@ def publish(
 ) -> None:
     auth = (wp_user, wp_app_password)
 
+    content_type = mimetypes.guess_type(image_path)[0] or "application/octet-stream"
     with open(image_path, "rb") as f:
         media_resp = requests.post(
             f"{wp_base_url}/wp-json/wp/v2/media",
             auth=auth,
-            headers={"Content-Disposition": f'attachment; filename="{Path(image_path).name}"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="{Path(image_path).name}"',
+                "Content-Type": content_type,
+            },
             data=f.read(),
             timeout=30,
         )
