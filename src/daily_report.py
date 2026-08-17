@@ -1,6 +1,7 @@
 """Daily job: fetch the latest observation, compare to climatology, plot, publish to WordPress."""
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 import matplotlib
@@ -10,7 +11,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from compute_climatology import anomaly, climatological_doy
-from fetch_dwd import fetch_recent
+from fetch_dwd import fetch_hourly_recent
 from publish_wordpress import publish
 
 STATION_ID = 1666
@@ -25,11 +26,21 @@ def load_climatology() -> pd.Series:
     return df.set_index("day_of_year")["tmk_normal"]
 
 
-def latest_observation(df: pd.DataFrame) -> tuple[pd.Timestamp, float]:
-    tmk = df["TMK"].replace(-999, pd.NA).dropna()
-    if tmk.empty:
-        raise RuntimeError("No valid TMK observations found in the 'recent' file")
-    return tmk.index[-1], float(tmk.iloc[-1])
+def previous_day_mean(hourly: pd.DataFrame) -> tuple[pd.Timestamp, float]:
+    """Mean TT_TU over the full previous calendar day (hours 00-23) — not just the last
+    24 rows, since a run early in DWD's publishing window could otherwise average a
+    partial day. Raises if the previous day isn't fully published yet."""
+    today = pd.Timestamp(datetime.now(timezone.utc).date())
+    target_date = today - pd.Timedelta(days=1)
+
+    day_obs = hourly.loc[f"{target_date:%Y-%m-%d}", "TT_TU"].replace(-999, pd.NA)
+    valid = day_obs.dropna()
+    if len(day_obs) != 24 or len(valid) != 24:
+        raise RuntimeError(
+            f"Incomplete hourly data for {target_date:%Y-%m-%d}: "
+            f"{len(valid)}/24 valid readings — DWD likely hasn't published the full day yet"
+        )
+    return target_date, float(valid.mean())
 
 
 def render_plot(climatology: pd.Series, obs_date: pd.Timestamp, obs_value: float, out_path: Path) -> None:
@@ -65,8 +76,8 @@ def build_html(obs_date: pd.Timestamp, obs_value: float, diff: float) -> str:
 
 def main() -> None:
     climatology = load_climatology()
-    recent = fetch_recent(STATION_ID)
-    obs_date, obs_value = latest_observation(recent)
+    hourly = fetch_hourly_recent(STATION_ID)
+    obs_date, obs_value = previous_day_mean(hourly)
 
     doy = climatological_doy(obs_date)
     try:
