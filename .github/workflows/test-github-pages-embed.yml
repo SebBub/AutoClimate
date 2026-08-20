@@ -1,0 +1,56 @@
+name: Test GitHub Pages iframe embed
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install plotly
+      - run: |
+          mkdir -p _site
+          python - <<'PY'
+          import plotly.graph_objects as go
+          fig = go.Figure(data=go.Scatter(x=[1, 2, 3, 4], y=[10, 15, 13, 17], mode="lines+markers"))
+          fig.update_layout(title="AutoKlima GitHub Pages embed test")
+          fig.write_html("_site/chart.html", full_html=True, include_plotlyjs="cdn")
+          PY
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+  test-embed:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - run: python test_github_pages_embed.py "${{ needs.deploy.outputs.page_url }}chart.html"
+        env:
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
