@@ -1,0 +1,17 @@
+name: Test Plotly WordPress embed
+on:
+  workflow_dispatch: {}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install plotly requests
+      - run: python test_plotly_embed.py
+        env:
+          WP_BASE_URL: ${{ secrets.WP_BASE_URL }}
+          WP_USER: ${{ secrets.WP_USER }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
