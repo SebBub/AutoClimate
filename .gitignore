@@ -3,3 +3,4 @@ __pycache__/
 .venv/
 *.png
 _site/
+.claude/settings.local.json

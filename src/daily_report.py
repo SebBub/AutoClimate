@@ -28,21 +28,39 @@ def load_climatology() -> pd.Series:
     return df.set_index("day_of_year")["tmk_normal"]
 
 
-def previous_day_mean(hourly: pd.DataFrame) -> tuple[pd.Timestamp, float]:
-    """Mean TT_TU over the full previous calendar day (hours 00-23) — not just the last
-    24 rows, since a run early in DWD's publishing window could otherwise average a
-    partial day. Raises if the previous day isn't fully published yet."""
-    today = pd.Timestamp(datetime.now(timezone.utc).date())
-    target_date = today - pd.Timedelta(days=1)
+MIN_VALID_HOURS = 20
 
-    day_obs = hourly.loc[hourly.index.normalize() == target_date, "TT_TU"].replace(-999, pd.NA)
+
+def _day_mean(hourly: pd.DataFrame, date: pd.Timestamp) -> float | None:
+    """Mean TT_TU over a calendar day's available hourly readings, or None if fewer than
+    MIN_VALID_HOURS of the 24 are present and valid. DWD's station feed regularly drops a
+    handful of hours (transmission gaps that never get backfilled), so a day is accepted
+    once most of it is there rather than requiring a strict 24/24."""
+    day_obs = hourly.loc[hourly.index.normalize() == date, "TT_TU"].replace(-999, pd.NA)
     valid = day_obs.dropna()
-    if len(day_obs) != 24 or len(valid) != 24:
-        raise RuntimeError(
-            f"Incomplete hourly data for {target_date:%Y-%m-%d}: "
-            f"{len(valid)}/24 valid readings — DWD likely hasn't published the full day yet"
-        )
-    return target_date, float(valid.mean())
+    if len(valid) < MIN_VALID_HOURS:
+        return None
+    return float(valid.mean())
+
+
+def last_complete_day_mean(hourly: pd.DataFrame) -> tuple[pd.Timestamp, float, bool]:
+    """Mean TT_TU for the most recent calendar day with at least MIN_VALID_HOURS valid
+    hourly readings, scanning backward from yesterday. DWD's 'recent' feed can lag or have
+    transmission gaps for individual hours, so we fall back to the last good-enough day
+    rather than failing. Returns (date, mean, is_fallback) where is_fallback is True when
+    yesterday itself didn't meet the threshold and we had to go further back."""
+    today = pd.Timestamp(datetime.now(timezone.utc).date())
+    expected_date = today - pd.Timedelta(days=1)
+    earliest = hourly.index.normalize().min()
+
+    candidate = expected_date
+    while candidate >= earliest:
+        mean = _day_mean(hourly, candidate)
+        if mean is not None:
+            return candidate, mean, candidate < expected_date
+        candidate -= pd.Timedelta(days=1)
+
+    raise RuntimeError("No complete day found in hourly data — DWD feed may be broken")
 
 
 def year_to_date_daily_means(hourly: pd.DataFrame, obs_date: pd.Timestamp) -> pd.Series:
@@ -120,11 +138,23 @@ def render_chart_html(
     return fig.to_html(full_html=False, include_plotlyjs="cdn", config={"responsive": True})
 
 
-def build_page_html(chart_snippet: str, obs_date: pd.Timestamp, obs_value: float, diff: float) -> str:
+def build_page_html(
+    chart_snippet: str,
+    obs_date: pd.Timestamp,
+    obs_value: float,
+    diff: float,
+    incomplete_fallback: bool = False,
+) -> str:
     summary = (
         f"<p>Stand {obs_date:%d.%m.%Y}: Tagesmitteltemperatur in {STATION_NAME} "
         f"{obs_value:.1f} °C ({format_diff(diff)} ggü. dem Klimanormal {REFERENCE_PERIOD}).</p>"
     )
+    note = ""
+    if incomplete_fallback:
+        note = (
+            f'<p style="color:#666; font-size:0.9em;">'
+            f"Letzter Tag mit vollständigem Datensatz: {obs_date:%d.%m.%Y}</p>"
+        )
     return f"""<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -146,6 +176,7 @@ def build_page_html(chart_snippet: str, obs_date: pd.Timestamp, obs_value: float
 </head>
 <body>
 {summary}
+{note}
 {chart_snippet}
 </body>
 </html>"""
@@ -154,7 +185,7 @@ def build_page_html(chart_snippet: str, obs_date: pd.Timestamp, obs_value: float
 def main() -> None:
     climatology = load_climatology()
     hourly = fetch_hourly_recent(STATION_ID)
-    obs_date, obs_value = previous_day_mean(hourly)
+    obs_date, obs_value, incomplete_fallback = last_complete_day_mean(hourly)
 
     doy = climatological_doy(obs_date)
     try:
@@ -164,11 +195,13 @@ def main() -> None:
 
     ytd_daily = year_to_date_daily_means(hourly, obs_date)
     chart_snippet = render_chart_html(climatology, ytd_daily, obs_date, obs_value)
-    page_html = build_page_html(chart_snippet, obs_date, obs_value, diff)
+    page_html = build_page_html(chart_snippet, obs_date, obs_value, diff, incomplete_fallback)
 
     SITE_DIR.mkdir(exist_ok=True)
     CHART_PATH.write_text(page_html, encoding="utf-8")
 
+    if incomplete_fallback:
+        print(f"Note: yesterday's hourly data was incomplete; fell back to last complete day {obs_date:%Y-%m-%d}")
     print(f"Rendered report for {obs_date:%Y-%m-%d}: {obs_value:.1f} °C ({format_diff(diff)} vs. normal) to {CHART_PATH}")
 
 
