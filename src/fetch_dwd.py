@@ -36,6 +36,16 @@ def fetch_hourly_recent(station_id: int) -> pd.DataFrame:
     return df.set_index("MESS_DATUM")
 
 
+def fetch_daily_kl_recent(station_id: int) -> pd.DataFrame:
+    """Recent daily climate ("kl") observations, including RSK precipitation, indexed by date.
+    Filename is deterministic — no directory listing needed."""
+    sid = f"{station_id:05d}"
+    url = f"{BASE}/recent/tageswerte_KL_{sid}_akt.zip"
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+    return _read_kl_zip(resp.content)
+
+
 def fetch_historical(station_id: int) -> pd.DataFrame:
     """Full history. Date range in the filename varies per station, so list the directory first."""
     sid = f"{station_id:05d}"

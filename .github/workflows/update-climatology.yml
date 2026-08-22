@@ -13,9 +13,10 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: python src/compute_climatology.py --station 1666 --out data/climatology_meierwik.csv
+      - run: python src/compute_precip_climatology.py --station 1666 --out data/precip_climatology_meierwik.csv
       - run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          git add data/climatology_meierwik.csv
+          git add data/climatology_meierwik.csv data/precip_climatology_meierwik.csv
           git commit -m "Update climatology" || echo "no changes"
           git push
